@@ -27,6 +27,8 @@ import os
 import sys
 
 import torch
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from config import cfg
 from datasets import make_data_loader_pack
@@ -53,7 +55,7 @@ def parse_args():
         '--log-dir',
         default='./logs',
         help="Directory containing logs, "
-        "tensorboard writer data or test evaluations."
+        "tensorboard writer data or test evaluations"
     )
     parser.add_argument(
         '--checkpoint-file',
@@ -63,9 +65,15 @@ def parse_args():
     parser.add_argument(
         '--test-only',
         action='store_true',
-        help="Executes model evaluation from a given checkpoint file."
+        help="executes model evaluation from a given checkpoint file"
     )
-
+    parser.add_argument(
+        '--local_rank',
+        type=int,
+        default=-1,
+        metavar='N',
+        help="local process rank"
+    )
     parser.add_argument(
         'opts',
         metavar='OPTIONS',
@@ -78,6 +86,17 @@ def parse_args():
     return args
 
 
+def ddp_setup(rank):
+    # os.environ['MASTER_ADDR'] = 'localhost'
+    # os.environ['MASTER_PORT'] = '12345'
+
+    dist.init_process_group(backend='nccl', init_method='env://', rank=rank)
+
+
+def ddp_cleanup():
+    dist.destroy_process_group()
+
+
 def main():
     args = parse_args()
 
@@ -87,12 +106,23 @@ def main():
         cfg.merge_from_list(args.opts)
     cfg.freeze()
 
-    os.makedirs(args.log_dir, exist_ok=True)
+    if args.log_dir:
+        os.makedirs(args.log_dir, exist_ok=True)
 
-    device = torch.device(cfg.DEVICE)
+    local_rank = args.local_rank
 
-    data_loader_te = make_data_loader_pack(cfg, is_train=False)
+    ddp_setup(rank=local_rank)
+
+    # device = torch.device(cfg.DEVICE)
+    device = torch.device(local_rank)
+    torch.cuda.set_device(local_rank)
+
     model = make_model(cfg).to(device)
+
+    model = DDP(model, device_ids=[local_rank], output_device=local_rank)
+    data_loader_te = make_data_loader_pack(
+        cfg, is_train=False, is_distributed=True
+    )
     criterion = make_loss()
     optimizer = make_optimizer(cfg, model)
     lr_scheduler = make_lr_scheduler(cfg, optimizer)
@@ -112,7 +142,9 @@ def main():
         checkpoint_save_freq = cfg.TRAIN.CHECKPOINT_SAVE_FREQ
         print_freq = cfg.TRAIN.PRINT_FREQ
 
-        data_loader_tr = make_data_loader_pack(cfg, is_train=True)
+        data_loader_tr = make_data_loader_pack(
+            cfg, is_train=True, is_distributed=True
+        )
 
         do_train(
             model=model,

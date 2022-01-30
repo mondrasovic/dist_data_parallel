@@ -23,8 +23,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 
 import torch
+import torch.distributed as dist
 import tqdm
-
 from utils import save_checkpoint
 
 
@@ -45,6 +45,8 @@ def _process_one_epoch(
         model.train()
     else:
         model.eval()
+
+    dist.barrier()
 
     phase = 'TRAIN' if is_train else 'TEST'
     desc_head = f"[{phase}] epoch: {epoch}/{n_epochs}"

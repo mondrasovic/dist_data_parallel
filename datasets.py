@@ -22,10 +22,10 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 
-from cv2 import transform
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torchvision import datasets, transforms
 
 
@@ -76,12 +76,14 @@ def make_dataset(cfg, transform, *, is_train=True):
     return dataset
 
 
-def make_data_loader(cfg, dataset, *, is_train=True):
-    shuffle = is_train
+def make_data_loader(cfg, dataset, sampler=None, *, is_train=True):
+    # If sampler is provided, then the shuffle parameter has to be avoided.
+    shuffle = is_train if sampler is None else None
     pin_memory = torch.cuda.is_available()
 
     data_loader = DataLoader(
         dataset=dataset,
+        sampler=sampler,
         batch_size=cfg.DATA_LOADER.BATCH_SIZE,
         shuffle=shuffle,
         num_workers=cfg.DATA_LOADER.N_WORKERS,
@@ -92,9 +94,14 @@ def make_data_loader(cfg, dataset, *, is_train=True):
     return data_loader
 
 
-def make_data_loader_pack(cfg, *, is_train=True):
+def make_data_loader_pack(cfg, *, is_train=True, is_distributed=False):
     transform = make_transform(cfg, is_train=is_train)
     dataset = make_dataset(cfg, transform, is_train=is_train)
-    data_loader = make_data_loader(cfg, dataset, is_train=is_train)
+
+    if is_distributed:
+        sampler = DistributedSampler(dataset, shuffle=is_train)
+    else:
+        sampler = None
+    data_loader = make_data_loader(cfg, dataset, sampler, is_train=is_train)
 
     return data_loader
